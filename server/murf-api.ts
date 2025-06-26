@@ -62,19 +62,25 @@ const voicePersonalities: { [key: string]: VoicePersonality } = {
 
 // Generate voice using Murf API
 export async function generateVoiceResponse(text: string, emotion: EmotionResult): Promise<string | null> {
+    console.log('generateVoiceResponse called with:', { text, emotion });
+    
     try {
         if (!process.env.MURF_API_KEY || process.env.MURF_API_KEY === 'your_murf_api_key_here') {
             console.log('Murf API key not configured, skipping voice generation');
             return null;
         }
 
+        console.log('Murf API key found, proceeding with voice generation');
         const voice = voicePersonalities[emotion.label] || voicePersonalities.neutral;
+        console.log('Selected voice:', voice);
         
         // Use the correct Murf API format based on their documentation
         const data = {
             text: text,
             voiceId: voice.id,
         };
+
+        console.log('Calling Murf API with data:', data);
 
         const response = await axios.post('https://api.murf.ai/v1/speech/generate', data, {
             headers: {
@@ -85,12 +91,24 @@ export async function generateVoiceResponse(text: string, emotion: EmotionResult
             timeout: 30000
         });
 
+        console.log('Murf API response status:', response.status);
+        console.log('Full Murf API response:', JSON.stringify(response.data, null, 2));
+
         if (response.data && response.data.audioFile) {
-            console.log('Voice generated successfully with Murf API');
+            console.log('Voice generated successfully with Murf API - audioFile found');
             return response.data.audioFile;
+        } else if (response.data && response.data.audio_url) {
+            console.log('Voice generated successfully with Murf API - audio_url found');
+            return response.data.audio_url;
+        } else if (response.data && response.data.url) {
+            console.log('Voice generated successfully with Murf API - url found');
+            return response.data.url;
+        } else if (response.data && response.data.audio) {
+            console.log('Voice generated successfully with Murf API - audio found');
+            return response.data.audio;
         }
         
-        console.log('No audio file in Murf response:', response.data);
+        console.log('No audio file in Murf response - checking all properties:', Object.keys(response.data));
         return null;
         
     } catch (error: any) {

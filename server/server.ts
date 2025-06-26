@@ -1,11 +1,12 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import multer from 'multer';
-import { analyzeEmotion, analyzeEmotionAdvanced, detectCrisis, detectLanguage, getLanguageSupport } from './emotion-analyzer';
+import axios from 'axios';
+import { analyzeEmotionAdvanced, detectCrisis, detectLanguage, getLanguageSupport } from './emotion-analyzer';
 import { generateResponse, generateAIResponse, generateVoiceResponse } from './murf-api';
 
 // Load environment variables
@@ -20,7 +21,7 @@ const io = new Server(server, {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -42,11 +43,45 @@ const upload = multer({
     }
 });
 
+// Proxy route for audio files
+app.get('/audio-proxy', async (req: Request, res: Response) => {
+    try {
+        const audioUrl = req.query.url as string;
+        if (!audioUrl) {
+            return res.status(400).json({ error: 'Missing audio URL' });
+        }
+
+        console.log('Proxying audio from:', audioUrl);
+        
+        // Fetch the audio file from Murf using axios
+        const response = await axios.get(audioUrl, {
+            responseType: 'arraybuffer',
+            timeout: 30000
+        });
+
+        // Set appropriate headers for audio
+        res.set({
+            'Content-Type': 'audio/wav',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Cache-Control': 'public, max-age=3600'
+        });
+
+        // Send the audio buffer
+        res.send(response.data);
+        
+    } catch (error: any) {
+        console.error('Error proxying audio:', error.message);
+        res.status(500).json({ error: 'Failed to proxy audio file' });
+    }
+});
+
 // Store conversation history for each socket
 const conversationHistory = new Map<string, Array<{message: string, emotion: any, timestamp: Date}>>();
 
 // Serve static files from public directory
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
@@ -90,7 +125,15 @@ io.on('connection', (socket) => {
             console.log('Generated response:', botResponse);
 
             // Generate voice response if Murf API is available
-            const audioUrl = await generateVoiceResponse(botResponse, emotion);
+            const murfAudioUrl = await generateVoiceResponse(botResponse, emotion);
+            console.log('Voice generation result - murfAudioUrl:', murfAudioUrl);
+
+            // Create proxied URL if Murf audio is available
+            const audioUrl = murfAudioUrl ? 
+                `http://localhost:${PORT}/audio-proxy?url=${encodeURIComponent(murfAudioUrl)}` : 
+                null;
+            
+            console.log('Proxied audio URL:', audioUrl);
 
             // Send response back to client
             const responseData = {
@@ -101,6 +144,11 @@ io.on('connection', (socket) => {
                 audioUrl: audioUrl,
                 timestamp: new Date().toISOString()
             };
+
+            console.log('Sending to frontend - responseData:', {
+                ...responseData,
+                audioUrl: audioUrl ? 'PROXIED_AUDIO_URL_PRESENT' : 'NO_AUDIO_URL'
+            });
 
             if (crisisResult.isCrisis) {
                 socket.emit('crisis-detected', {

@@ -1,21 +1,25 @@
 // Initialize Socket.IO connection
 const socket = io();
 
-// DOM elements
-const messagesArea = document.getElementById('messages');
-const messageInput = document.getElementById('messageInput');
-const sendButton = document.getElementById('sendButton');
-const emotionResult = document.getElementById('emotionResult');
-const voiceButton = document.getElementById('voiceButton');
-const playAudioButton = document.getElementById('playAudioButton');
-const languageSelect = document.getElementById('languageSelect');
-const emergencyResources = document.getElementById('emergencyResources');
-const resourcesList = document.getElementById('resourcesList');
+console.log('Socket.IO initialized');
 
-// Accessibility controls
-const toggleHighContrast = document.getElementById('toggleHighContrast');
-const toggleLargeText = document.getElementById('toggleLargeText');
-const toggleVoiceOnly = document.getElementById('toggleVoiceOnly');
+// Add connection event listeners
+socket.on('connect', () => {
+    console.log('Connected to server with socket ID:', socket.id);
+});
+
+socket.on('disconnect', () => {
+    console.log('Disconnected from server');
+});
+
+socket.on('connect_error', (error) => {
+    console.error('Socket connection error:', error);
+});
+
+// DOM elements - will be initialized in DOMContentLoaded
+let messagesArea, messageInput, sendButton, emotionResult, voiceButton, playAudioButton;
+let languageSelect, emergencyResources, resourcesList;
+let toggleHighContrast, toggleLargeText, toggleVoiceOnly;
 
 // State management
 let isProcessing = false;
@@ -30,6 +34,9 @@ let silenceTimeout = null;
 let maxRecordingTimeout = null;
 let speechRecognitionRetries = 0;
 let maxRetries = 2;
+let currentAudio = null;
+let isAISpeaking = false;
+let speechDetectionTimeout = null;
 
 // Initialize speech recognition if available
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -81,18 +88,25 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
                 silenceTimeout = null;
             }
             
-            // Set a new timeout for silence detection
+            // Reset speech detection timeout when we get any speech
+            if (speechDetectionTimeout) {
+                clearTimeout(speechDetectionTimeout);
+                speechDetectionTimeout = null;
+            }
+            
+            // Set a new timeout for silence detection (auto-stop when user stops talking)
             if (interimTranscript && !finalTranscript && isRecording) {
-                silenceTimeout = setTimeout(() => {
-                    console.log('Silence timeout - processing interim results');
+                speechDetectionTimeout = setTimeout(() => {
+                    console.log('User stopped talking - auto-stopping recording');
                     if (messageInput.value.trim() && isRecording) {
-                        // Treat interim as final after silence
+                        // User stopped talking, treat interim as final
+                        addMessage('🎤 Detected end of speech. Processing...', 'system');
                         stopVoiceRecording();
                         setTimeout(() => {
                             sendMessage();
-                        }, 500);
+                        }, 300);
                     }
-                }, 3000); // 3 seconds of silence
+                }, 2000); // 2 seconds of silence after speech = auto-stop
             }
         }
         
@@ -186,10 +200,15 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         isListening = false;
         updateVoiceButtonState();
         
-        // Clear silence timeout
+        // Clear all timeouts
         if (silenceTimeout) {
             clearTimeout(silenceTimeout);
             silenceTimeout = null;
+        }
+        
+        if (speechDetectionTimeout) {
+            clearTimeout(speechDetectionTimeout);
+            speechDetectionTimeout = null;
         }
         
         // If we're still recording and have no text, provide feedback
@@ -222,20 +241,6 @@ window.addEventListener('offline', () => {
     addMessage('🌐 Internet connection lost. Voice recognition will be unavailable until connection is restored.', 'system');
 });
 
-// Event listeners
-sendButton.addEventListener('click', () => {
-    enableAudioAutoplay();
-    sendMessage();
-});
-
-messageInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        enableAudioAutoplay();
-        sendMessage();
-    }
-});
-
 // Function to enable audio autoplay after user interaction
 function enableAudioAutoplay() {
     if (!audioAutoplayEnabled) {
@@ -244,55 +249,11 @@ function enableAudioAutoplay() {
     }
 }
 
-// Voice controls - Simple click-to-toggle mode
-voiceButton.addEventListener('click', (e) => {
-    e.preventDefault();
-    enableAudioAutoplay();
-    
-    if (isRecording || isListening) {
-        console.log('Stopping voice recording (user clicked)');
-        stopVoiceRecording();
-    } else {
-        console.log('Starting voice recording (user clicked)');
-        startVoiceRecording();
-    }
-});
-
-// Support touch events for mobile
-voiceButton.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    enableAudioAutoplay();
-    
-    if (isRecording || isListening) {
-        console.log('Stopping voice recording (touch)');
-        stopVoiceRecording();
-    } else {
-        console.log('Starting voice recording (touch)');
-        startVoiceRecording();
-    }
-});
-
-playAudioButton.addEventListener('click', () => {
-    enableAudioAutoplay();
-    playAudioResponse();
-});
-
-// Language selection
-languageSelect.addEventListener('change', (e) => {
-    if (recognition) {
-        recognition.lang = e.target.value === 'es' ? 'es-ES' : 
-                          e.target.value === 'fr' ? 'fr-FR' : 'en-US';
-    }
-});
-
-// Accessibility controls
-toggleHighContrast.addEventListener('click', toggleHighContrastMode);
-toggleLargeText.addEventListener('click', toggleLargeTextMode);
-toggleVoiceOnly.addEventListener('click', toggleVoiceOnlyMode);
-
 // Socket event listeners
 socket.on('bot-response', (data) => {
+    console.log('Frontend received bot-response:', data);
+    console.log('Audio URL received:', data.audioUrl);
+    
     removeTypingIndicator();
     addMessage(data.message, 'bot');
     if (data.emotion) {
@@ -304,10 +265,11 @@ socket.on('bot-response', (data) => {
         currentAudioUrl = data.audioUrl;
         playAudioButton.style.display = 'block';
         playAudioButton.title = 'Play Murf AI voice response';
-        console.log('Audio URL received:', data.audioUrl);
+        console.log('Audio URL set for playback:', data.audioUrl);
         
         // Auto-play the audio response if user has interacted
         if (audioAutoplayEnabled) {
+            console.log('Auto-playing audio response');
             setTimeout(() => {
                 playAudioResponse();
             }, 500); // Small delay to ensure UI is updated
@@ -315,6 +277,7 @@ socket.on('bot-response', (data) => {
             addMessage('🔊 Audio response ready. Click the speaker button to hear it.', 'system');
         }
     } else {
+        console.log('No audio URL received, hiding audio button');
         // Hide audio button if no audio available
         playAudioButton.style.display = 'none';
         currentAudioUrl = null;
@@ -354,7 +317,9 @@ socket.on('error', (error) => {
 function sendMessage() {
     const message = messageInput.value.trim();
     
-    if (!message || isProcessing) return;
+    if (!message || isProcessing) {
+        return;
+    }
     
     addMessage(message, 'user');
     messageInput.value = '';
@@ -385,8 +350,12 @@ function addMessage(text, sender, type = 'normal') {
     timestamp.textContent = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
     messageDiv.appendChild(timestamp);
     
-    messagesArea.appendChild(messageDiv);
-    messagesArea.scrollTop = messagesArea.scrollHeight;
+    if (messagesArea) {
+        messagesArea.appendChild(messageDiv);
+        messagesArea.scrollTop = messagesArea.scrollHeight;
+    } else {
+        console.error('messagesArea element not found!');
+    }
     
     // Announce to screen readers
     if (sender === 'bot') {
@@ -442,14 +411,20 @@ function setProcessing(processing) {
 
 // Update voice button visual state
 function updateVoiceButtonState() {
-    console.log('Updating voice button state - isRecording:', isRecording, 'isListening:', isListening);
+    console.log('Updating voice button state - isRecording:', isRecording, 'isListening:', isListening, 'isAISpeaking:', isAISpeaking);
     
-    if (isListening || isRecording) {
+    // Remove all classes first
+    voiceButton.classList.remove('recording', 'ai-speaking');
+    
+    if (isAISpeaking) {
+        voiceButton.classList.add('ai-speaking');
+        voiceButton.textContent = '🔇';
+        voiceButton.title = 'AI is speaking. Click to interrupt and speak.';
+    } else if (isListening || isRecording) {
         voiceButton.classList.add('recording');
         voiceButton.textContent = '🔴';
         voiceButton.title = 'Listening... Click to stop';
     } else {
-        voiceButton.classList.remove('recording');
         voiceButton.textContent = '🎤';
         voiceButton.title = 'Click to speak';
     }
@@ -563,6 +538,11 @@ function stopVoiceRecording() {
             silenceTimeout = null;
         }
         
+        if (speechDetectionTimeout) {
+            clearTimeout(speechDetectionTimeout);
+            speechDetectionTimeout = null;
+        }
+        
         if (maxRecordingTimeout) {
             clearTimeout(maxRecordingTimeout);
             maxRecordingTimeout = null;
@@ -617,45 +597,56 @@ function playAudioResponse() {
     if (currentAudioUrl) {
         console.log('Playing audio from URL:', currentAudioUrl);
         
-        const audio = new Audio();
-        audio.crossOrigin = 'anonymous'; // Handle CORS
-        audio.src = currentAudioUrl;
+        // Stop any existing audio
+        stopAISpeech();
+        
+        currentAudio = new Audio();
+        currentAudio.crossOrigin = 'anonymous'; // Handle CORS
+        currentAudio.src = currentAudioUrl;
         
         // Add loading indicator
         playAudioButton.textContent = '⏳';
         playAudioButton.disabled = true;
         
-        audio.onloadstart = () => {
+        currentAudio.onloadstart = () => {
             console.log('Audio loading started...');
         };
         
-        audio.oncanplay = () => {
+        currentAudio.oncanplay = () => {
             console.log('Audio can start playing');
         };
         
-        audio.onplay = () => {
+        currentAudio.onplay = () => {
             console.log('Audio playback started');
+            isAISpeaking = true;
             playAudioButton.textContent = '🔊';
+            updateVoiceButtonForAISpeech();
         };
         
-        audio.onended = () => {
+        currentAudio.onended = () => {
             console.log('Audio playback ended');
+            isAISpeaking = false;
             playAudioButton.textContent = '🔊';
             playAudioButton.disabled = false;
+            updateVoiceButtonState();
         };
         
-        audio.onerror = (error) => {
+        currentAudio.onerror = (error) => {
             console.error('Audio playback error:', error);
+            isAISpeaking = false;
             playAudioButton.textContent = '🔊';
             playAudioButton.disabled = false;
+            updateVoiceButtonState();
             addMessage('Sorry, I couldn\'t play the audio response. The audio file might not be ready yet.', 'system');
         };
         
         // Attempt to play
-        audio.play().catch(error => {
+        currentAudio.play().catch(error => {
             console.error('Error playing audio:', error);
+            isAISpeaking = false;
             playAudioButton.textContent = '🔊';
             playAudioButton.disabled = false;
+            updateVoiceButtonState();
             
             if (error.name === 'NotAllowedError') {
                 addMessage('Audio playback blocked. Please click the speaker button to hear the response.', 'system');
@@ -667,6 +658,32 @@ function playAudioResponse() {
     } else {
         console.log('No audio URL available');
         addMessage('No audio response available.', 'system');
+    }
+}
+
+// Stop AI speech function
+function stopAISpeech() {
+    if (currentAudio && isAISpeaking) {
+        console.log('Stopping AI speech');
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+        isAISpeaking = false;
+        playAudioButton.textContent = '🔊';
+        playAudioButton.disabled = false;
+        updateVoiceButtonState();
+    }
+}
+
+// Update voice button when AI is speaking
+function updateVoiceButtonForAISpeech() {
+    if (isAISpeaking) {
+        voiceButton.classList.add('ai-speaking');
+        voiceButton.textContent = '🔇';
+        voiceButton.title = 'AI is speaking. Click to interrupt and speak.';
+    } else {
+        voiceButton.classList.remove('ai-speaking');
+        voiceButton.textContent = '🎤';
+        voiceButton.title = 'Click to speak';
     }
 }
 
@@ -782,6 +799,118 @@ window.addEventListener('offline', () => {
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize DOM elements
+    messagesArea = document.getElementById('messages');
+    messageInput = document.getElementById('messageInput');
+    sendButton = document.getElementById('sendButton');
+    emotionResult = document.getElementById('emotionResult');
+    voiceButton = document.getElementById('voiceButton');
+    playAudioButton = document.getElementById('playAudioButton');
+    languageSelect = document.getElementById('languageSelect');
+    emergencyResources = document.getElementById('emergencyResources');
+    resourcesList = document.getElementById('resourcesList');
+    toggleHighContrast = document.getElementById('toggleHighContrast');
+    toggleLargeText = document.getElementById('toggleLargeText');
+    toggleVoiceOnly = document.getElementById('toggleVoiceOnly');
+    
+    if (!messagesArea || !messageInput || !sendButton) {
+        console.error('Critical DOM elements not found!');
+        return;
+    }
+    
+    console.log('✅ All DOM elements loaded successfully');
+    
+    // Add event listeners after DOM elements are found
+    sendButton.addEventListener('click', () => {
+        enableAudioAutoplay();
+        sendMessage();
+    });
+
+    messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            enableAudioAutoplay();
+            sendMessage();
+        }
+    });
+
+    // Voice controls - Simple click-to-toggle mode
+    voiceButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        enableAudioAutoplay();
+        
+        // If AI is speaking, stop the AI speech first
+        if (isAISpeaking) {
+            console.log('Interrupting AI speech (user clicked mic)');
+            stopAISpeech();
+            addMessage('🔇 AI speech interrupted. You can speak now.', 'system');
+            // Then start voice recording
+            setTimeout(() => {
+                startVoiceRecording();
+            }, 200);
+            return;
+        }
+        
+        if (isRecording || isListening) {
+            console.log('Stopping voice recording (user clicked)');
+            stopVoiceRecording();
+        } else {
+            console.log('Starting voice recording (user clicked)');
+            startVoiceRecording();
+        }
+    });
+
+    // Support touch events for mobile
+    voiceButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        enableAudioAutoplay();
+        
+        // If AI is speaking, stop the AI speech first
+        if (isAISpeaking) {
+            console.log('Interrupting AI speech (touch)');
+            stopAISpeech();
+            addMessage('🔇 AI speech interrupted. You can speak now.', 'system');
+            // Then start voice recording
+            setTimeout(() => {
+                startVoiceRecording();
+            }, 200);
+            return;
+        }
+        
+        if (isRecording || isListening) {
+            console.log('Stopping voice recording (touch)');
+            stopVoiceRecording();
+        } else {
+            console.log('Starting voice recording (touch)');
+            startVoiceRecording();
+        }
+    });
+
+    playAudioButton.addEventListener('click', () => {
+        enableAudioAutoplay();
+        playAudioResponse();
+    });
+
+    // Language selection
+    languageSelect.addEventListener('change', (e) => {
+        if (recognition) {
+            recognition.lang = e.target.value === 'es' ? 'es-ES' : 
+                              e.target.value === 'fr' ? 'fr-FR' : 'en-US';
+        }
+    });
+
+    // Accessibility controls
+    if (toggleHighContrast) {
+        toggleHighContrast.addEventListener('click', toggleHighContrastMode);
+    }
+    if (toggleLargeText) {
+        toggleLargeText.addEventListener('click', toggleLargeTextMode);
+    }
+    if (toggleVoiceOnly) {
+        toggleVoiceOnly.addEventListener('click', toggleVoiceOnlyMode);
+    }
+    
     messageInput.focus();
     
     // Load accessibility preferences

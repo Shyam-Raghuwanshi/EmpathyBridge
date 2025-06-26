@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EmpathyBridge Test</title>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <h1>EmpathyBridge Frontend Test</h1>
+    <div id="output"></div>
+    <script>
+        const output = document.getElementById('output');
+        
+        function log(message) {
+            output.innerHTML += '<p>' + message + '</p>';
+            console.log(message);
+        }
+        
+        // Test Socket.IO connection
+        const socket = io();
+        
+        socket.on('connect', () => {
+            log('✅ Connected to server with ID: ' + socket.id);
+            
+            // Test sending a message
+            log('📤 Sending test message...');
+            socket.emit('user-message', {
+                message: 'Hello, this is a test',
+                language: 'en'
+            });
+        });
+        
+        socket.on('bot-response', (data) => {
+            log('📥 Received bot response: ' + data.message);
+            log('🎵 Audio URL: ' + (data.audioUrl ? 'Present' : 'Not present'));
+            log('✅ SUCCESS: Frontend-Backend communication working!');
+        });
+        
+        socket.on('error', (error) => {
+            log('❌ Socket error: ' + error);
+        });
+        
+        socket.on('connect_error', (error) => {
+            log('❌ Connection error: ' + error);
+        });
+    </script>
+</body>
+</html>
