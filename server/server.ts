@@ -27,12 +27,27 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Serve static files - handle both development and production paths
+// Serve static files with proper MIME types
 const publicPath = process.env.NODE_ENV === 'production' 
-    ? path.join(__dirname, 'public')     // In production: dist/public (after copying)
+    ? path.join(__dirname, '../public')  // In production: dist/public (one level up from dist/server)
     : path.join(__dirname, '../public'); // In development: public
 
-app.use(express.static(publicPath));
+console.log('📁 Serving static files from:', publicPath);
+
+// Static file serving with explicit MIME types
+app.use(express.static(publicPath, {
+    setHeaders: (res, path) => {
+        if (path.endsWith('.css')) {
+            res.setHeader('Content-Type', 'text/css');
+        } else if (path.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/javascript');
+        } else if (path.endsWith('.json')) {
+            res.setHeader('Content-Type', 'application/json');
+        } else if (path.endsWith('.html')) {
+            res.setHeader('Content-Type', 'text/html');
+        }
+    }
+}));
 
 // Configure multer for voice file uploads
 const upload = multer({
@@ -345,6 +360,27 @@ app.get('/test-murf', async (req, res) => {
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Explicit routes for static files
+app.get('/style.css', (req, res) => {
+    res.setHeader('Content-Type', 'text/css');
+    res.sendFile(path.join(publicPath, 'style.css'));
+});
+
+app.get('/script.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.sendFile(path.join(publicPath, 'script.js'));
+});
+
+app.get('/manifest.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.sendFile(path.join(publicPath, 'manifest.json'));
+});
+
+app.get('/service-worker.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.sendFile(path.join(publicPath, 'service-worker.js'));
 });
 
 // Serve the main app at root
