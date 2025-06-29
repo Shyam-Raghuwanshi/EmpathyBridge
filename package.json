@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "dist/server/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r public dist/",
     "start": "node dist/server/server.js",
     "dev": "nodemon --exec ts-node server/server.ts",
     "type-check": "tsc --noEmit",
