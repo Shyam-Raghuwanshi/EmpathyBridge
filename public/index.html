@@ -6,51 +6,60 @@
     <title>EmpathyBridge - AI-Powered Emotional Support</title>
     <link rel="stylesheet" href="style.css">
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#4f46e5">
+    <meta name="theme-color" content="#0ea5e9">
+    <meta name="description" content="Your compassionate AI companion for emotional support and mental wellness">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🤗%3C/text%3E%3C/svg%3E">
 </head>
 <body>
     <div class="container">
         <header>
             <h1>EmpathyBridge</h1>
-            <p>Your AI-powered emotional support companion</p>
+            <p>Your compassionate AI companion for emotional support and mental wellness</p>
         </header>
         
         <main>
             <div class="chat-container">
                 <div id="messages" class="messages-area">
                     <div class="message bot-message">
-                        <p>Hello! I'm here to listen and support you. How are you feeling today?</p>
+                        <p>Hello! 👋 I'm here to listen and support you with empathy and understanding. How are you feeling today?</p>
+                        <span class="timestamp">Just now</span>
                     </div>
                 </div>
                 
                 <div class="input-area">
                     <div class="voice-controls">
-                        <button id="voiceButton" class="voice-btn" title="Hold to speak">
+                        <button id="voiceButton" class="voice-btn" title="Hold to speak" aria-label="Voice input">
                             🎤
                         </button>
-                        <button id="playAudioButton" class="audio-btn" title="Play audio response" style="display: none;">
+                        <button id="playAudioButton" class="audio-btn" title="Play audio response" aria-label="Play audio response" style="display: none;">
                             🔊
                         </button>
                     </div>
                     <textarea 
                         id="messageInput" 
-                        placeholder="Share your thoughts and feelings..."
-                        rows="3"
+                        placeholder="Share your thoughts and feelings... I'm here to listen."
+                        rows="1"
+                        aria-label="Message input"
                     ></textarea>
                     <div class="send-controls">
-                        <select id="languageSelect" class="language-select">
-                            <option value="en">English</option>
-                            <option value="es">Español</option>
-                            <option value="fr">Français</option>
-                        </select>
-                        <button id="sendButton">Send</button>
+                        <button id="sendButton" aria-label="Send message">
+                            <span>Send</span>
+                        </button>
                     </div>
+                    <select id="languageSelect" class="language-select" aria-label="Select language">
+                        <option value="en">🇺🇸 English</option>
+                        <option value="es">🇪🇸 Español</option>
+                        <option value="fr">🇫🇷 Français</option>
+                        <option value="de">🇩🇪 Deutsch</option>
+                        <option value="it">🇮🇹 Italiano</option>
+                        <option value="pt">🇵🇹 Português</option>
+                    </select>
                 </div>
             </div>
             
             <div class="sidebar">
                 <div class="emotion-display">
-                    <h3>Detected Emotion</h3>
+                    <h3>💭 Emotion Insight</h3>
                     <div id="emotionResult">
                         <span class="emotion-label">Neutral</span>
                         <div class="emotion-confidence">Confidence: 0%</div>
@@ -58,25 +67,28 @@
                 </div>
                 
                 <div class="emergency-resources" id="emergencyResources" style="display: none;">
-                    <h3>⚠️ Crisis Resources</h3>
+                    <h3>🆘 Crisis Support</h3>
                     <div id="resourcesList">
                         <!-- Crisis resources will be populated here -->
                     </div>
-                    <p class="crisis-message">You are not alone. Help is available.</p>
+                    <p class="crisis-message">You are not alone. Help is available 24/7.</p>
                 </div>
                 
                 <div class="accessibility-controls">
-                    <h3>Accessibility</h3>
-                    <button id="toggleHighContrast" class="accessibility-btn">High Contrast</button>
-                    <button id="toggleLargeText" class="accessibility-btn">Large Text</button>
+                    <h3>⚙️ Preferences</h3>
+                    <button id="toggleHighContrast" class="accessibility-btn" aria-label="Toggle high contrast mode">
+                        🌗 High Contrast
+                    </button>
+                    <button id="toggleLargeText" class="accessibility-btn" aria-label="Toggle large text">
+                        🔍 Large Text
+                    </button>
                     <div class="voice-select-container">
                         <select id="voiceSelect" class="voice-select" aria-label="Select AI voice">
-                            <option value="">Click to load voices...</option>
+                            <option value="">🔊 Select AI Voice...</option>
                             <!-- Voice options will be populated via JavaScript -->
                         </select>
-                        <div class="voice-select-label">AI Voice</div>
+                        <div class="voice-select-label">AI Voice Selection</div>
                     </div>
-                    <!-- <button id="toggleVoiceOnly" class="accessibility-btn">Voice Only</button> -->
                 </div>
             </div>
         </main>

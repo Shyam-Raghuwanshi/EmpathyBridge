@@ -359,6 +359,17 @@ function addMessage(text, sender, type = 'normal') {
         messageDiv.classList.add('crisis-message');
     } else if (sender === 'system') {
         messageDiv.classList.add('system-message');
+        
+        // Add specific classes based on message content for better styling
+        if (text.includes('Voice Tip') || text.includes('💡 Tip')) {
+            messageDiv.classList.add('tip');
+        } else if (text.includes('error') || text.includes('denied') || text.includes('failed') || text.includes('⚠️') || text.includes('❌')) {
+            messageDiv.classList.add('error');
+        } else if (text.includes('connection') || text.includes('internet') || text.includes('🌐')) {
+            messageDiv.classList.add('connection');
+        } else if (text.includes('🎤') || text.includes('🔊') || text.includes('voice') || text.includes('microphone') || text.includes('audio')) {
+            messageDiv.classList.add('voice');
+        }
     }
     
     messageDiv.innerHTML = `<p>${text}</p>`;
@@ -380,7 +391,8 @@ function addMessage(text, sender, type = 'normal') {
     if (sender === 'bot') {
         announceToScreenReader(text);
     }
-}
+    }
+
 
 function showTypingIndicator() {
     removeTypingIndicator(); // Remove any existing indicator
