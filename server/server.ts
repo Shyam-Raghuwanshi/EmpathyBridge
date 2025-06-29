@@ -267,8 +267,14 @@ io.on('connection', (socket) => {
             }
 
             // Create proxied URL if Murf audio is available
+            // Use environment-based URL generation (works in both dev and production)
+            const baseUrl = process.env.RENDER_EXTERNAL_URL || 
+                (process.env.NODE_ENV === 'production' ? 
+                    'https://empathybridge-3ntq.onrender.com' : 
+                    `http://localhost:${PORT}`);
+            
             const audioUrl = murfAudioUrl ? 
-                `http://localhost:${PORT}/audio-proxy?url=${encodeURIComponent(murfAudioUrl)}` : 
+                `${baseUrl}/audio-proxy?url=${encodeURIComponent(murfAudioUrl)}` : 
                 null;
             
             console.log('Final audio URL result:', audioUrl ? 'AUDIO_AVAILABLE' : 'NO_AUDIO');
