@@ -77,6 +77,100 @@ app.get('/audio-proxy', async (req: Request, res: Response) => {
     }
 });
 
+// Route to get available voices from Murf API
+app.get('/api/get-voices', async (req: Request, res: Response) => {
+    try {
+        console.log('Fetching available voices from Murf API');
+        
+        if (!process.env.MURF_API_KEY || process.env.MURF_API_KEY === 'your_murf_api_key_here') {
+            console.log('Murf API key not configured, returning mock data');
+            return res.status(200).json({ 
+                voices: [
+                    { id: "en-US-cooper", name: "Cooper", gender: "Male", accent: "en-US" },
+                    { id: "en-UK-hazel", name: "Hazel", gender: "Female", accent: "en-UK" },
+                    { id: "en-US-imani", name: "Imani", gender: "Female", accent: "en-US" }
+                ]
+            });
+        }
+        
+        const response = await axios.get('https://api.murf.ai/v1/speech/voices', {
+            headers: {
+                'Accept': 'application/json',
+                'api-key': process.env.MURF_API_KEY,
+            },
+            timeout: 15000
+        });
+        
+        console.log('Murf API voice response status:', response.status);
+        
+        if (response.data && Array.isArray(response.data)) {
+            // Transform the Murf API response to our expected format
+            const voices = response.data.map((voice: any) => ({
+                id: voice.voiceId,
+                name: voice.displayName.replace(/\s*\([MF]\)/, ''), // Remove (M) or (F) suffix
+                gender: voice.gender,
+                accent: voice.locale,
+                description: voice.description,
+                styles: voice.availableStyles
+            }));
+            
+            return res.status(200).json({ voices });
+        } else {
+            console.log('Unexpected response format from Murf API:', response.data);
+            return res.status(200).json({ 
+                voices: [
+                    { id: "en-US-cooper", name: "Cooper", gender: "Male", accent: "en-US" },
+                    { id: "en-UK-hazel", name: "Hazel", gender: "Female", accent: "en-UK" },
+                    { id: "en-US-imani", name: "Imani", gender: "Female", accent: "en-US" }
+                ]
+            });
+        }
+    } catch (error: any) {
+        console.error('Error fetching voices from Murf API:', error);
+        if (error.response) {
+            console.error('Response status:', error.response.status);
+            console.error('Response data:', error.response.data);
+        }
+        
+        // Return mock data on error
+        return res.status(200).json({ 
+            voices: [
+                { id: "en-US-cooper", name: "Cooper", gender: "Male", accent: "en-US" },
+                { id: "en-UK-hazel", name: "Hazel", gender: "Female", accent: "en-UK" },
+                { id: "en-US-imani", name: "Imani", gender: "Female", accent: "en-US" }
+            ]
+        });
+    }
+});
+
+// Test endpoint for voice generation
+app.post('/api/test-voice', async (req: Request, res: Response) => {
+    try {
+        const { text, voiceId } = req.body;
+        
+        if (!text) {
+            return res.status(400).json({ error: 'Text is required' });
+        }
+        
+        console.log('Testing voice generation with:', { text, voiceId });
+        
+        const emotion = { label: 'neutral', confidence: 1.0 };
+        const audioUrl = await generateVoiceResponse(text, emotion, voiceId);
+        
+        return res.status(200).json({ 
+            success: !!audioUrl,
+            audioUrl: audioUrl,
+            message: audioUrl ? 'Voice generation successful' : 'Voice generation failed'
+        });
+    } catch (error: any) {
+        console.error('Voice test error:', error);
+        return res.status(500).json({ 
+            error: 'Voice generation test failed',
+            details: error.message 
+        });
+    }
+});
+
 // Store conversation history for each socket
 const conversationHistory = new Map<string, Array<{message: string, emotion: any, timestamp: Date}>>();
 
@@ -94,8 +188,9 @@ io.on('connection', (socket) => {
 
     socket.on('user-message', async (data) => {
         try {
-            const { message, language } = data;
+            const { message, language, voiceId } = data;
             console.log('Received message:', message);
+            console.log('Voice ID:', voiceId || 'Not specified, using emotion-based voice');
 
             // Detect language if not provided
             const detectedLanguage = language || detectLanguage(message);
@@ -125,15 +220,37 @@ io.on('connection', (socket) => {
             console.log('Generated response:', botResponse);
 
             // Generate voice response if Murf API is available
-            const murfAudioUrl = await generateVoiceResponse(botResponse, emotion);
-            console.log('Voice generation result - murfAudioUrl:', murfAudioUrl);
+            let murfAudioUrl: string | null = null;
+            let voiceGenerationAttempts = 0;
+            const maxVoiceAttempts = 2;
+            
+            while (voiceGenerationAttempts < maxVoiceAttempts && !murfAudioUrl) {
+                try {
+                    voiceGenerationAttempts++;
+                    console.log(`Voice generation attempt ${voiceGenerationAttempts}/${maxVoiceAttempts}`);
+                    
+                    murfAudioUrl = await generateVoiceResponse(botResponse, emotion, voiceId);
+                    console.log('Voice generation result - murfAudioUrl:', murfAudioUrl);
+                    
+                    if (!murfAudioUrl && voiceGenerationAttempts < maxVoiceAttempts) {
+                        console.log('Voice generation failed, retrying with default voice...');
+                        // Retry with default voice if custom voice failed
+                        murfAudioUrl = await generateVoiceResponse(botResponse, emotion);
+                    }
+                } catch (error) {
+                    console.error(`Voice generation attempt ${voiceGenerationAttempts} failed:`, error);
+                    if (voiceGenerationAttempts >= maxVoiceAttempts) {
+                        console.log('All voice generation attempts failed, proceeding without audio');
+                    }
+                }
+            }
 
             // Create proxied URL if Murf audio is available
             const audioUrl = murfAudioUrl ? 
                 `http://localhost:${PORT}/audio-proxy?url=${encodeURIComponent(murfAudioUrl)}` : 
                 null;
             
-            console.log('Proxied audio URL:', audioUrl);
+            console.log('Final audio URL result:', audioUrl ? 'AUDIO_AVAILABLE' : 'NO_AUDIO');
 
             // Send response back to client
             const responseData = {

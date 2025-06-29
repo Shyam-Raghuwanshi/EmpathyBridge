@@ -18,7 +18,7 @@ socket.on('connect_error', (error) => {
 
 // DOM elements - will be initialized in DOMContentLoaded
 let messagesArea, messageInput, sendButton, emotionResult, voiceButton, playAudioButton;
-let languageSelect, emergencyResources, resourcesList;
+let languageSelect, emergencyResources, resourcesList, voiceSelect;
 let toggleHighContrast, toggleLargeText, toggleVoiceOnly;
 
 // State management
@@ -42,17 +42,15 @@ let speechDetectionTimeout = null;
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     recognition = new SpeechRecognition();
-    recognition.continuous = true; // Keep listening continuously
+    recognition.continuous = false; // Set to false to prevent automatic restart
     recognition.interimResults = true; // Enable interim results
     recognition.lang = 'en-US';
     recognition.maxAlternatives = 1;
     
     // Set up recognition event handlers
     recognition.onstart = () => {
-        console.log('Speech recognition started');
         isListening = true;
         speechRecognitionRetries = 0; // Reset retry counter on successful start
-        addMessage('🎤 Listening... (speak clearly)', 'system');
         updateVoiceButtonState();
         
         // Clear any previous silence timeout
@@ -97,15 +95,14 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
             // Set a new timeout for silence detection (auto-stop when user stops talking)
             if (interimTranscript && !finalTranscript && isRecording) {
                 speechDetectionTimeout = setTimeout(() => {
-                    console.log('User stopped talking - auto-stopping recording');
                     if (messageInput.value.trim() && isRecording) {
                         // User stopped talking, treat interim as final
-                        addMessage('🎤 Detected end of speech. Processing...', 'system');
                         stopVoiceRecording();
                         setTimeout(() => {
                             sendMessage();
                         }, 300);
                     }
+                    // IMPORTANT: Do not restart recognition automatically
                 }, 2000); // 2 seconds of silence after speech = auto-stop
             }
         }
@@ -211,12 +208,14 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
             speechDetectionTimeout = null;
         }
         
-        // If we're still recording and have no text, provide feedback
+        // If we're still recording and have no text, don't show error message
         if (isRecording && !messageInput.value.trim()) {
-            console.log('Recognition ended without results');
             // Don't restart automatically, let user click again
-            addMessage('🎤 No speech detected. Click the microphone to try again.', 'system');
         }
+        
+        // IMPORTANT: Never restart recognition automatically
+        // User must click the mic button to start listening again
+        console.log('Speech recognition ended - user must click mic button to start again');
     };
 }
 
@@ -254,6 +253,10 @@ socket.on('bot-response', (data) => {
     console.log('Frontend received bot-response:', data);
     console.log('Audio URL received:', data.audioUrl);
     
+    // IMPORTANT: Reset all recording states when bot responds
+    // This ensures the microphone button is in the correct state
+    resetVoiceStates();
+    
     removeTypingIndicator();
     addMessage(data.message, 'bot');
     if (data.emotion) {
@@ -281,6 +284,12 @@ socket.on('bot-response', (data) => {
         // Hide audio button if no audio available
         playAudioButton.style.display = 'none';
         currentAudioUrl = null;
+        
+        // If no audio, ensure mic button is ready for next input
+        updateVoiceButtonState();
+        setTimeout(() => {
+            addMessage('🎤 Click the microphone button to respond.', 'system');
+        }, 1000);
     }
     
     if (data.crisis && data.crisis.isCrisis) {
@@ -321,14 +330,24 @@ function sendMessage() {
         return;
     }
     
+    // IMPORTANT: Stop all recording when sending message
+    if (isRecording || isListening) {
+        console.log('Stopping recording before sending message');
+        stopVoiceRecording();
+    }
+    
     addMessage(message, 'user');
     messageInput.value = '';
     setProcessing(true);
     
-    // Send message to server with language preference
+    // Get the selected voice ID
+    const selectedVoiceId = voiceSelect ? voiceSelect.value : '';
+    
+    // Send message to server with language preference and voice ID
     socket.emit('user-message', { 
         message,
-        language: languageSelect.value 
+        language: languageSelect.value,
+        voiceId: selectedVoiceId
     });
 }
 
@@ -411,8 +430,6 @@ function setProcessing(processing) {
 
 // Update voice button visual state
 function updateVoiceButtonState() {
-    console.log('Updating voice button state - isRecording:', isRecording, 'isListening:', isListening, 'isAISpeaking:', isAISpeaking);
-    
     // Remove all classes first
     voiceButton.classList.remove('recording', 'ai-speaking');
     
@@ -428,6 +445,46 @@ function updateVoiceButtonState() {
         voiceButton.textContent = '🎤';
         voiceButton.title = 'Click to speak';
     }
+}
+
+// Force reset all voice recording states
+function resetVoiceStates() {
+    isRecording = false;
+    isListening = false;
+    
+    // Clear all timeouts
+    if (silenceTimeout) {
+        clearTimeout(silenceTimeout);
+        silenceTimeout = null;
+    }
+    if (speechDetectionTimeout) {
+        clearTimeout(speechDetectionTimeout);
+        speechDetectionTimeout = null;
+    }
+    if (maxRecordingTimeout) {
+        clearTimeout(maxRecordingTimeout);
+        maxRecordingTimeout = null;
+    }
+    
+    // Stop recognition
+    if (recognition) {
+        try {
+            recognition.stop();
+        } catch (error) {
+            // Silently handle if already stopped
+        }
+    }
+    
+    // Stop media recorder
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+            mediaRecorder.stop();
+        } catch (error) {
+            // Silently handle if already stopped
+        }
+    }
+    
+    updateVoiceButtonState();
 }
 
 // Voice recording functions
@@ -530,67 +587,46 @@ function stopVoiceRecording() {
     if (mediaRecorder && isRecording) {
         console.log('Stopping voice recording...');
         mediaRecorder.stop();
-        isRecording = false;
-        
-        // Clear timeouts
-        if (silenceTimeout) {
-            clearTimeout(silenceTimeout);
-            silenceTimeout = null;
-        }
-        
-        if (speechDetectionTimeout) {
-            clearTimeout(speechDetectionTimeout);
-            speechDetectionTimeout = null;
-        }
-        
-        if (maxRecordingTimeout) {
-            clearTimeout(maxRecordingTimeout);
-            maxRecordingTimeout = null;
-        }
-        
-        // Stop recognition first
-        if (recognition && isListening) {
-            try {
-                recognition.stop();
-            } catch (error) {
-                console.log('Recognition already stopped');
-            }
-        }
-        
-        updateVoiceButtonState();
-        
-        // Give a moment for final results to come through
-        setTimeout(() => {
-            if (!messageInput.value.trim()) {
-                addMessage('🎤 Recording stopped. Processing...', 'system');
-            }
-        }, 200);
     }
-}
+    
+    // Always reset states regardless of mediaRecorder state
+    isRecording = false;
+    isListening = false;
+    
+    // Clear timeouts
+    if (silenceTimeout) {
+        clearTimeout(silenceTimeout);
+        silenceTimeout = null;
+    }
+    
+    if (speechDetectionTimeout) {
+        clearTimeout(speechDetectionTimeout);
+        speechDetectionTimeout = null;
+    }
+    
+    if (maxRecordingTimeout) {
+        clearTimeout(maxRecordingTimeout);
+        maxRecordingTimeout = null;
+    }
+    
+    // Stop recognition
+    if (recognition) {
+        try {
+            recognition.stop();
+        } catch (error) {
+            console.log('Recognition already stopped');
+        }
+    }
+    
+    // Update button state to ensure it shows correct state        updateVoiceButtonState();
+        
+        // No need to show processing message here as it's handled by speech recognition
+    }
 
 function processVoiceInput(audioBlob) {
-    console.log('Processing voice input...');
-    
-    // Check if we have text from speech recognition
-    if (messageInput.value.trim()) {
-        console.log('Text recognized:', messageInput.value);
-        addMessage('✅ Voice recognized: "' + messageInput.value + '"', 'system');
-        // Don't auto-send here since recognition already handles it
-    } else {
-        console.log('No text recognized from voice input');
-        addMessage('❌ Speech-to-text failed. Please type your message manually, or try the voice button again with a better internet connection.', 'system');
-        
-        // Focus on the input field so user can type
-        setTimeout(() => {
-            messageInput.focus();
-            messageInput.placeholder = 'Type your message here (speech recognition failed)...';
-        }, 500);
-        
-        // Reset placeholder after a delay
-        setTimeout(() => {
-            messageInput.placeholder = 'Type your message here...';
-        }, 10000);
-    }
+    // This function is called when MediaRecorder stops
+    // Speech recognition handling is done separately in recognition.onresult
+    // No need to show any messages here as they're handled by speech recognition events
 }
 
 function playAudioResponse() {
@@ -629,6 +665,15 @@ function playAudioResponse() {
             playAudioButton.textContent = '🔊';
             playAudioButton.disabled = false;
             updateVoiceButtonState();
+            
+            // IMPORTANT: Do NOT automatically start listening after AI speech ends
+            // User must manually click the microphone button to speak again
+            console.log('AI speech ended - waiting for user to click mic button');
+            
+            // Give user a helpful reminder
+            setTimeout(() => {
+                addMessage('🎤 Click the microphone button to respond.', 'system');
+            }, 1000);
         };
         
         currentAudio.onerror = (error) => {
@@ -784,20 +829,98 @@ function loadAccessibilityPreferences() {
         document.body.classList.add('voice-only');
         toggleVoiceOnly.classList.add('active');
     }
+    
+    // Load voice preference if stored
+    const savedVoiceId = localStorage.getItem('preferredVoiceId');
+    if (savedVoiceId && voiceSelect) {
+        // We'll apply this after the voices are fetched
+        voiceSelect.dataset.savedVoiceId = savedVoiceId;
+    }
 }
 
-// Add connectivity listeners
-window.addEventListener('online', () => {
-    console.log('Internet connection restored');
-    addMessage('🌐 Internet connection restored. Voice recognition is now available.', 'system');
-});
+// Load voice options from Murf API
+async function fetchVoices() {
+    try {
+        const response = await fetch('/api/get-voices');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        
+        if (!data.voices || !Array.isArray(data.voices)) {
+            throw new Error('Invalid response format: missing voices array');
+        }
+        
+        populateVoiceDropdown(data.voices);
+    } catch (error) {
+        console.error('Error fetching voices:', error);
+        throw error; // Let the caller handle the error
+    }
+}
 
-window.addEventListener('offline', () => {
-    console.log('Internet connection lost');
-    addMessage('🌐 Internet connection lost. Voice recognition will be unavailable until connection is restored.', 'system');
-});
+// Populate the voice dropdown with available options
+function populateVoiceDropdown(voices) {
+    if (!voiceSelect || !voices || !Array.isArray(voices)) {
+        console.error('Cannot populate voice dropdown: invalid data', { voiceSelect, voices });
+        return;
+    }
 
-// Initialize the app
+    // Clear existing options
+    while (voiceSelect.options.length > 0) {
+        voiceSelect.options.remove(0);
+    }
+    
+    // Add default option
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Default Voice';
+    voiceSelect.appendChild(defaultOption);
+
+    // Group voices by accent
+    const voicesByAccent = {};
+    voices.forEach(voice => {
+        const accent = voice.accent || 'Other';
+        if (!voicesByAccent[accent]) {
+            voicesByAccent[accent] = [];
+        }
+        voicesByAccent[accent].push(voice);
+    });
+
+    // Add voice options grouped by accent
+    Object.keys(voicesByAccent).sort().forEach(accent => {
+        const group = document.createElement('optgroup');
+        group.label = accent;
+        
+        voicesByAccent[accent].sort((a, b) => a.name.localeCompare(b.name)).forEach(voice => {
+            const option = document.createElement('option');
+            option.value = voice.id;
+            option.textContent = `${voice.name} (${voice.gender})`;
+            group.appendChild(option);
+        });
+        
+        voiceSelect.appendChild(group);
+    });
+    
+    // Restore saved voice preference
+    const savedVoiceId = voiceSelect.dataset.savedVoiceId || localStorage.getItem('preferredVoiceId');
+    if (savedVoiceId) {
+        // Find if the saved voice exists in the options
+        for (let i = 0; i < voiceSelect.options.length; i++) {
+            if (voiceSelect.options[i].value === savedVoiceId) {
+                voiceSelect.selectedIndex = i;
+                console.log('Restored saved voice preference:', savedVoiceId);
+                break;
+            }
+        }
+        
+        // Clean up the data attribute
+        delete voiceSelect.dataset.savedVoiceId;
+    }
+    
+    console.log(`Populated voice dropdown with ${voices.length} voices`);
+}
+
+// Call the init function when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize DOM elements
     messagesArea = document.getElementById('messages');
@@ -807,6 +930,7 @@ document.addEventListener('DOMContentLoaded', () => {
     voiceButton = document.getElementById('voiceButton');
     playAudioButton = document.getElementById('playAudioButton');
     languageSelect = document.getElementById('languageSelect');
+    voiceSelect = document.getElementById('voiceSelect');
     emergencyResources = document.getElementById('emergencyResources');
     resourcesList = document.getElementById('resourcesList');
     toggleHighContrast = document.getElementById('toggleHighContrast');
@@ -899,6 +1023,84 @@ document.addEventListener('DOMContentLoaded', () => {
                               e.target.value === 'fr' ? 'fr-FR' : 'en-US';
         }
     });
+    
+    // Voice selection
+    if (voiceSelect) {
+        // Track whether voices have been loaded
+        let voicesLoaded = false;
+        let loadingVoices = false;
+        
+        async function loadVoices() {
+            if (loadingVoices || voicesLoaded) return;
+            
+            try {
+                loadingVoices = true;
+                voiceSelect.classList.add('loading');
+                voiceSelect.title = 'Loading voice options...';
+                
+                // Change the text of the default option to indicate loading
+                if (voiceSelect.options.length > 0) {
+                    voiceSelect.options[0].textContent = 'Loading voices...';
+                }
+                
+                // Fetch the voices
+                await fetchVoices();
+                voicesLoaded = true;
+            } catch (error) {
+                console.error('Error loading voices:', error);
+                addMessage('⚠️ Could not load voice options. Please try again.', 'system');
+            } finally {
+                loadingVoices = false;
+                voiceSelect.classList.remove('loading');
+                voiceSelect.title = 'Select AI voice';
+                
+                // Restore default option text if loading failed
+                if (!voicesLoaded && voiceSelect.options.length > 0) {
+                    voiceSelect.options[0].textContent = 'Click to load voices...';
+                }
+            }
+        }
+        
+        // Add click event to fetch voices when dropdown is first clicked
+        voiceSelect.addEventListener('mousedown', function(e) {
+            if (!voicesLoaded && !loadingVoices) {
+                // Prevent the dropdown from opening immediately
+                e.preventDefault();
+                loadVoices().then(() => {
+                    // Open the dropdown after loading
+                    setTimeout(() => {
+                        voiceSelect.focus();
+                        voiceSelect.click();
+                    }, 100);
+                });
+            }
+        });
+        
+        // Also handle focus for keyboard users
+        voiceSelect.addEventListener('focus', function() {
+            if (!voicesLoaded && !loadingVoices) {
+                loadVoices();
+            }
+        });
+        
+        // Handle voice change
+        voiceSelect.addEventListener('change', (e) => {
+            console.log('Voice changed to:', e.target.value);
+            const selectedOption = e.target.options[e.target.selectedIndex];
+            
+            // Save voice preference
+            if (e.target.value) {
+                localStorage.setItem('preferredVoiceId', e.target.value);
+            } else {
+                localStorage.removeItem('preferredVoiceId');
+            }
+            
+            if (selectedOption) {
+                const voiceName = selectedOption.textContent;
+                addMessage(`🔊 Voice set to: ${voiceName}`, 'system');
+            }
+        });
+    }
 
     // Accessibility controls
     if (toggleHighContrast) {
@@ -928,7 +1130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Add voice instructions
         setTimeout(() => {
             if (isSpeechRecognitionAvailable()) {
-                addMessage('💡 Voice Tip: Click the microphone button (🎤) and speak clearly. I\'ll automatically respond with voice when available!', 'system');
+                addMessage('💡 Voice Tip: Click the microphone button (🎤) and speak clearly. After I respond, click the mic button again to speak. This ensures you have full control over our conversation!', 'system');
             } else {
                 addMessage('💡 Tip: Voice recognition is currently unavailable. Please type your messages or check your internet connection.', 'system');
             }

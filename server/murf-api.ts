@@ -24,29 +24,29 @@ interface VoicePersonality {
 // Murf voice personalities for different emotional states
 const voicePersonalities: { [key: string]: VoicePersonality } = {
     sad: {
-        id: "en-US-natalie",
-        name: "Natalie",
-        gender: "female",
+        id: "en-US-cooper", // Cooper has Sad style available
+        name: "Cooper",
+        gender: "male",
         emotion: "compassionate",
         accent: "en-US"
     },
     anxious: {
-        id: "en-US-sarah",
-        name: "Sarah",
+        id: "en-US-hazel", // Hazel for calming female voice
+        name: "Hazel",
         gender: "female", 
         emotion: "calming",
-        accent: "en-US"
+        accent: "en-UK"
     },
     angry: {
-        id: "en-US-david",
-        name: "David",
+        id: "en-US-cooper", // Cooper has Angry style available
+        name: "Cooper",
         gender: "male",
         emotion: "understanding",
         accent: "en-US"
     },
     happy: {
-        id: "en-US-clint",
-        name: "Clint",
+        id: "en-US-cooper", // Cooper has Inspirational style
+        name: "Cooper",
         gender: "male",
         emotion: "supportive",
         accent: "en-US"
@@ -61,8 +61,8 @@ const voicePersonalities: { [key: string]: VoicePersonality } = {
 };
 
 // Generate voice using Murf API
-export async function generateVoiceResponse(text: string, emotion: EmotionResult): Promise<string | null> {
-    console.log('generateVoiceResponse called with:', { text, emotion });
+export async function generateVoiceResponse(text: string, emotion: EmotionResult, customVoiceId?: string): Promise<string | null> {
+    console.log('generateVoiceResponse called with:', { text, emotion, customVoiceId });
     
     try {
         if (!process.env.MURF_API_KEY || process.env.MURF_API_KEY === 'your_murf_api_key_here') {
@@ -71,44 +71,111 @@ export async function generateVoiceResponse(text: string, emotion: EmotionResult
         }
 
         console.log('Murf API key found, proceeding with voice generation');
-        const voice = voicePersonalities[emotion.label] || voicePersonalities.neutral;
-        console.log('Selected voice:', voice);
+        
+        // Use custom voice if provided, otherwise select based on emotion
+        let voiceId: string;
+        if (customVoiceId && customVoiceId.trim() !== '') {
+            console.log('Using custom voice ID:', customVoiceId);
+            voiceId = customVoiceId;
+        } else {
+            const voice = voicePersonalities[emotion.label] || voicePersonalities.neutral;
+            console.log('Selected voice based on emotion:', voice);
+            voiceId = voice.id;
+        }
+        
+        // Validate and clean the text
+        const cleanText = text.trim();
+        if (!cleanText || cleanText.length === 0) {
+            console.log('No text to convert to speech');
+            return null;
+        }
+        
+        // Truncate text if too long (Murf API may have limits)
+        const maxLength = 1000; // Adjust based on Murf API limits
+        const finalText = cleanText.length > maxLength ? cleanText.substring(0, maxLength) + '...' : cleanText;
         
         // Use the correct Murf API format based on their documentation
-        const data = {
-            text: text,
-            voiceId: voice.id,
+        const requestData = {
+            text: finalText,
+            voiceId: voiceId,
+            format: 'mp3', // Specify audio format
+            speed: 1.0,     // Normal speed
+            pitch: 1.0      // Normal pitch
         };
 
-        console.log('Calling Murf API with data:', data);
+        console.log('Calling Murf API with data:', requestData);
 
-        const response = await axios.post('https://api.murf.ai/v1/speech/generate', data, {
+        const response = await axios.post('https://api.murf.ai/v1/speech/generate', requestData, {
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
                 'api-key': process.env.MURF_API_KEY,
+                'User-Agent': 'EmpathyBridge/1.0'
             },
-            timeout: 30000
+            timeout: 45000, // Increased timeout for voice generation
+            validateStatus: function (status) {
+                return status >= 200 && status < 500; // Don't throw for 4xx errors
+            }
         });
 
         console.log('Murf API response status:', response.status);
+        console.log('Murf API response headers:', response.headers);
         console.log('Full Murf API response:', JSON.stringify(response.data, null, 2));
 
-        if (response.data && response.data.audioFile) {
-            console.log('Voice generated successfully with Murf API - audioFile found');
-            return response.data.audioFile;
-        } else if (response.data && response.data.audio_url) {
-            console.log('Voice generated successfully with Murf API - audio_url found');
-            return response.data.audio_url;
-        } else if (response.data && response.data.url) {
-            console.log('Voice generated successfully with Murf API - url found');
-            return response.data.url;
-        } else if (response.data && response.data.audio) {
-            console.log('Voice generated successfully with Murf API - audio found');
-            return response.data.audio;
+        // Handle different HTTP status codes
+        if (response.status === 401) {
+            console.error('Murf API authentication failed - check API key');
+            return null;
         }
         
-        console.log('No audio file in Murf response - checking all properties:', Object.keys(response.data));
+        if (response.status === 429) {
+            console.error('Murf API rate limit exceeded');
+            return null;
+        }
+        
+        if (response.status >= 400) {
+            console.error('Murf API error:', response.status, response.data);
+            return null;
+        }
+
+        // Try different possible response formats
+        const responseData = response.data;
+        
+        // Check for direct audio URL in various formats
+        const possibleUrlFields = [
+            'audioFile', 'audio_url', 'url', 'audio', 'audioUrl', 
+            'download_url', 'file_url', 'result', 'data'
+        ];
+        
+        for (const field of possibleUrlFields) {
+            if (responseData && responseData[field]) {
+                console.log(`Voice generated successfully with Murf API - ${field} found:`, responseData[field]);
+                return responseData[field];
+            }
+        }
+        
+        // Check for nested audio URL
+        if (responseData && responseData.result && responseData.result.audio_url) {
+            console.log('Voice generated successfully with Murf API - nested audio_url found');
+            return responseData.result.audio_url;
+        }
+        
+        // Check if response is directly a URL string
+        if (typeof responseData === 'string' && responseData.startsWith('http')) {
+            console.log('Voice generated successfully with Murf API - direct URL response');
+            return responseData;
+        }
+        
+        console.log('No audio file in Murf response - available properties:', Object.keys(responseData || {}));
+        
+        // Log the entire response structure for debugging
+        if (responseData) {
+            console.log('Response structure analysis:');
+            console.log('- Type:', typeof responseData);
+            console.log('- Keys:', Object.keys(responseData));
+            console.log('- Values:', Object.values(responseData));
+        }
+        
         return null;
         
     } catch (error: any) {
